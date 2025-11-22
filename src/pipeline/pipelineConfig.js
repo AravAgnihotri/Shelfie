@@ -11,7 +11,7 @@ export const pipelineConfig = {
    * - 'mock': Use mock data (fast, for development)
    * - 'real': Use real ML models (requires model files and GPU)
    */
-  inferenceMode: 'mock',
+  inferenceMode: 'real',
 
   /**
    * Model Paths
@@ -22,7 +22,7 @@ export const pipelineConfig = {
     poseEstimation: {
       type: 'mediapipe', // 'openpose' | 'mediapipe' | 'hrnet'
       path: '/models/pose/mediapipe_pose_landmarker.task',
-      enabled: false
+      enabled: true
     },
 
     // SMPL parameter regression model

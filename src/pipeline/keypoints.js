@@ -34,69 +34,128 @@ import { logger, PipelineStage } from './logger.js';
 import { pipelineConfig, isRealInference, getMockDelay } from './pipelineConfig.js';
 
 /**
- * Initialize pose estimation model (real implementation)
+ * Convert File object to HTMLImageElement
  * 
- * @returns {Promise<Object>} Initialized model instance
+ * @param {File} file - Image file
+ * @returns {Promise<HTMLImageElement>} Loaded image element
+ */
+function fileToImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load image'));
+    };
+    
+    img.src = url;
+  });
+}
+
+/**
+ * Initialize MediaPipe Pose model
+ * 
+ * @returns {Promise<Object>} Initialized Pose instance
  */
 async function initPoseModel() {
-  // REAL IMPLEMENTATION WOULD:
-  // const vision = await FilesetResolver.forVisionTasks(wasmPath);
-  // const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-  //   baseOptions: {
-  //     modelAssetPath: pipelineConfig.models.poseEstimation.path,
-  //     delegate: 'GPU'
-  //   },
-  //   runningMode: 'IMAGE',
-  //   numPoses: 1
-  // });
-  // return poseLandmarker;
-  
-  logger.debug(PipelineStage.KEYPOINTS, 'Pose model initialization skipped (mock mode)');
-  return null;
-}
-
-/**
- * Preprocess image for pose estimation
- * 
- * @param {File|HTMLImageElement} imageFile - Input image
- * @returns {Promise<ImageData>} Preprocessed image data
- */
-async function preprocessImage(imageFile) {
-  // REAL IMPLEMENTATION WOULD:
-  // - Load image to canvas
-  // - Resize to model input size (e.g., 256x256)
-  // - Normalize pixel values
-  // - Convert to appropriate format (RGB, tensor, etc.)
-  
-  logger.debug(PipelineStage.KEYPOINTS, 'Image preprocessing', {
-    fileName: imageFile?.name,
-    type: imageFile?.type
+  return new Promise((resolve, reject) => {
+    if (!window.Pose) {
+      reject(new Error('MediaPipe Pose not loaded. Check script tags in index.html'));
+      return;
+    }
+    
+    const pose = new window.Pose({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+      }
+    });
+    
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      smoothSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    
+    pose.initialize().then(() => {
+      logger.debug(PipelineStage.KEYPOINTS, 'MediaPipe Pose initialized');
+      resolve(pose);
+    }).catch(reject);
   });
-  
-  return null; // Mock: no actual preprocessing
 }
 
 /**
- * Run pose inference on image
+ * Run MediaPipe Pose detection on image
  * 
- * @param {Object} model - Pose estimation model
- * @param {ImageData} imageData - Preprocessed image
- * @returns {Promise<Array>} Detected keypoints
+ * @param {Object} pose - MediaPipe Pose instance
+ * @param {HTMLImageElement} image - Image to process
+ * @returns {Promise<Array>} Detected landmarks
  */
-async function runPoseInference(model, imageData) {
-  // REAL IMPLEMENTATION WOULD:
-  // const result = await poseLandmarker.detect(image);
-  // const landmarks = result.landmarks[0]; // First person
-  // return landmarks.map(lm => ({
-  //   x: lm.x,
-  //   y: lm.y,
-  //   z: lm.z, // 3D coordinate
-  //   visibility: lm.visibility,
-  //   confidence: lm.presence
-  // }));
+async function runPoseInference(pose, image) {
+  return new Promise((resolve, reject) => {
+    pose.onResults((results) => {
+      if (results.poseLandmarks) {
+        resolve(results.poseLandmarks);
+      } else {
+        resolve([]);
+      }
+    });
+    
+    pose.send({ image }).catch(reject);
+  });
+}
+
+/**
+ * Convert MediaPipe landmarks to pipeline format
+ * MediaPipe returns 33 landmarks, we map them to COCO 17 keypoints
+ * 
+ * @param {Array} landmarks - MediaPipe pose landmarks
+ * @returns {Array} Keypoints in format [{x, y, confidence, name}, ...]
+ */
+function convertMediaPipeToCOCO(landmarks) {
+  if (!landmarks || landmarks.length === 0) {
+    return [];
+  }
   
-  logger.debug(PipelineStage.KEYPOINTS, 'Running pose inference (mock)');
-  return null;
+  // MediaPipe Pose landmark indices (33 total)
+  // Map to COCO 17-keypoint format
+  const cocoMapping = [
+    { mpIndex: 0, name: 'nose' },
+    { mpIndex: 0, name: 'neck' }, // MediaPipe doesn't have neck, use nose as approximation
+    { mpIndex: 12, name: 'right_shoulder' },
+    { mpIndex: 14, name: 'right_elbow' },
+    { mpIndex: 16, name: 'right_wrist' },
+    { mpIndex: 11, name: 'left_shoulder' },
+    { mpIndex: 13, name: 'left_elbow' },
+    { mpIndex: 15, name: 'left_wrist' },
+    { mpIndex: 24, name: 'right_hip' },
+    { mpIndex: 26, name: 'right_knee' },
+    { mpIndex: 28, name: 'right_ankle' },
+    { mpIndex: 23, name: 'left_hip' },
+    { mpIndex: 25, name: 'left_knee' },
+    { mpIndex: 27, name: 'left_ankle' },
+    { mpIndex: 2, name: 'right_eye' },
+    { mpIndex: 5, name: 'left_eye' },
+    { mpIndex: 8, name: 'right_ear' }
+  ];
+  
+  return cocoMapping.map(({ mpIndex, name }) => {
+    const landmark = landmarks[mpIndex];
+    return {
+      x: landmark.x,
+      y: landmark.y,
+      confidence: landmark.visibility || 0.5,
+      name: name
+    };
+  });
 }
 
 /**
@@ -139,7 +198,7 @@ function generateMockKeypoints() {
  * Extract keypoints from image
  * 
  * Main entry point for keypoint detection.
- * Supports both mock and real inference modes.
+ * Uses real MediaPipe Pose for keypoint extraction.
  * 
  * @param {File|HTMLImageElement} imageFile - Input image
  * @returns {Promise<Array>} Array of keypoints [{x, y, confidence, name}, ...]
@@ -151,12 +210,27 @@ export async function extractKeypoints(imageFile) {
     let keypoints;
 
     if (isRealInference() && pipelineConfig.models.poseEstimation.enabled) {
-      // REAL INFERENCE PATH
-      logger.info(PipelineStage.KEYPOINTS, 'Using real pose estimation model');
+      // REAL MEDIAPIPE INFERENCE
+      logger.info(PipelineStage.KEYPOINTS, 'Using MediaPipe Pose for keypoint extraction');
       
-      const model = await initPoseModel();
-      const imageData = await preprocessImage(imageFile);
-      keypoints = await runPoseInference(model, imageData);
+      // Convert File to HTMLImageElement if needed
+      let image = imageFile;
+      if (imageFile instanceof File) {
+        logger.debug(PipelineStage.KEYPOINTS, 'Converting File to Image');
+        image = await fileToImage(imageFile);
+      }
+      
+      // Initialize MediaPipe Pose
+      const pose = await initPoseModel();
+      
+      // Run pose detection
+      logger.debug(PipelineStage.KEYPOINTS, 'Running pose detection');
+      const landmarks = await runPoseInference(pose, image);
+      
+      // Convert to COCO format
+      keypoints = convertMediaPipeToCOCO(landmarks);
+      
+      logger.debug(PipelineStage.KEYPOINTS, `Detected ${keypoints.length} keypoints from MediaPipe`);
       
     } else {
       // MOCK INFERENCE PATH
