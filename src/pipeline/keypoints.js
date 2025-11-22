@@ -64,32 +64,27 @@ function fileToImage(file) {
  * @returns {Promise<Object>} Initialized Pose instance
  */
 async function initPoseModel() {
-  return new Promise((resolve, reject) => {
-    if (!window.Pose) {
-      reject(new Error('MediaPipe Pose not loaded. Check script tags in index.html'));
-      return;
+  if (!window.Pose) {
+    throw new Error('MediaPipe Pose not loaded. Check script tags in index.html');
+  }
+  
+  const pose = new window.Pose({
+    locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
     }
-    
-    const pose = new window.Pose({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
-      }
-    });
-    
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      enableSegmentation: false,
-      smoothSegmentation: false,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    
-    pose.initialize().then(() => {
-      logger.debug(PipelineStage.KEYPOINTS, 'MediaPipe Pose initialized');
-      resolve(pose);
-    }).catch(reject);
   });
+  
+  pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    smoothSegmentation: false,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+  
+  logger.debug(PipelineStage.KEYPOINTS, 'MediaPipe Pose initialized');
+  return pose;
 }
 
 /**

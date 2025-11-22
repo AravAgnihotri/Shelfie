@@ -27,14 +27,17 @@ Preferred communication style: Simple, everyday language.
 
 The application implements a modular, staged processing pipeline:
 
-### Stage 1: Keypoint Extraction (`keypoints.js`)
+### Stage 1: Keypoint Extraction (`keypoints.js`) ✅ UPGRADED
 - **Purpose**: Extract 2D body joint positions from input images
-- **Current State**: Mock implementation with placeholders for real models
-- **Planned Approaches**:
-  - MediaPipe Pose (33 landmarks, browser-based with WebGL/WebGPU)
-  - TensorFlow.js with MoveNet/OpenPose (17-25 keypoints)
-  - Backend API integration for server-side processing
-- **Trade-offs**: Browser-based = faster UX but limited accuracy; Server-based = better models but latency
+- **Current State**: **REAL MediaPipe Pose** (November 2025)
+- **Implementation**: 
+  - MediaPipe Pose via CDN (browser-based, WebGL accelerated)
+  - Detects 33 landmarks, maps to 17 COCO keypoints
+  - File → HTMLImageElement conversion
+  - Real-time pose detection on uploaded images
+  - Confidence filtering (threshold: 0.5)
+- **Integration**: CDN scripts loaded in `index.html`, no npm packages required
+- **Trade-offs**: Browser-based = faster UX, no server needed; Limited to single person detection
 
 ### Stage 2: SMPL Parameter Fitting (`smplFit.js`)
 - **Purpose**: Convert 2D keypoints to SMPL body model parameters
