@@ -7,11 +7,18 @@
 
 export const pipelineConfig = {
   /**
-   * Inference Mode
-   * - 'mock': Use mock data (fast, for development)
-   * - 'real': Use real ML models (requires model files and GPU)
-   */
+ * Inference Mode
+ * - 'mock': Use mock data (fast, for development)
+ * - 'real': Use real ML models (requires model files and GPU)
+ */
   inferenceMode: 'real',
+
+  /**
+   * SMPL execution mode
+   * - 'mock': client-side mock parameters
+   * - 'remote': call backend API (Modal GPU) for real SMPL inference
+   */
+  smplMode: 'mock',
 
   /**
    * Model Paths

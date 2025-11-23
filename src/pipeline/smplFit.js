@@ -112,6 +112,61 @@ async function runSMPLInference(model, input) {
 }
 
 /**
+ * Remote SMPL fitting (Modal GPU backend placeholder)
+ * @param {string} imageData - base64-encoded JPEG/PNG
+ * @returns {Promise<Object>} SMPL params
+ */
+export async function smplFitRemote(imageData) {
+  if (!imageData) {
+    throw new Error('smplFitRemote requires base64 image data');
+  }
+
+  const endpoint = '/smplify'; // To be routed to Modal backend
+  const payload = { image: imageData };
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    throw new Error(`Remote SMPL request failed: ${res.status} ${res.statusText}`);
+  }
+
+  const data = await res.json();
+  const { betas, thetas, vertices, faces } = data || {};
+
+  const isNumericArray = (arr) => Array.isArray(arr) && arr.every(v => typeof v === 'number');
+  const isFaceArray = (arr) =>
+    Array.isArray(arr) &&
+    arr.every(f => Array.isArray(f) && f.length === 3 && f.every(v => Number.isInteger(v)));
+
+  if (!isNumericArray(betas) || betas.length === 0) {
+    throw new Error('Remote SMPL response missing betas');
+  }
+  if (!isNumericArray(thetas) || thetas.length === 0) {
+    throw new Error('Remote SMPL response missing thetas');
+  }
+  if (vertices && !isNumericArray(vertices)) {
+    throw new Error('Remote SMPL response vertices invalid');
+  }
+  if (faces && !isFaceArray(faces)) {
+    throw new Error('Remote SMPL response faces invalid');
+  }
+
+  return normalizeSMPLParams(
+    {
+      betas,
+      thetas,
+      vertices: vertices || [],
+      faces: faces || []
+    },
+    null
+  );
+}
+
+/**
  * Optimization-based SMPL fitting (SMPLify approach)
  * 
  * @param {Array} keypoints - 2D keypoints
@@ -196,21 +251,58 @@ function generateMockSMPLParams(keypoints) {
 }
 
 /**
+ * Ensure SMPL params follow the standard shape expected downstream.
+ * Adds placeholders for vertices/faces and reattaches keypoints.
+ */
+function normalizeSMPLParams(rawParams, keypoints) {
+  const betas = Array.isArray(rawParams?.betas) ? rawParams.betas : Array(10).fill(0);
+  const thetas = Array.isArray(rawParams?.thetas) ? rawParams.thetas : Array(72).fill(0);
+
+  const vertices = Array.isArray(rawParams?.vertices) ? rawParams.vertices : [];
+  const faces = Array.isArray(rawParams?.faces) ? rawParams.faces : [];
+
+  const avgConfidence =
+    rawParams?.avgConfidence ??
+    (keypoints && keypoints.length
+      ? keypoints.reduce((sum, kp) => sum + kp.confidence, 0) / keypoints.length
+      : undefined);
+
+  return {
+    betas,
+    thetas,
+    vertices,
+    faces,
+    keypoints: rawParams?.keypoints || keypoints || [],
+    translation: rawParams?.translation,
+    camera: rawParams?.camera,
+    avgConfidence,
+    method: rawParams?.method || 'mock'
+  };
+}
+
+/**
  * Fit SMPL model to detected keypoints
  * 
  * Main entry point for SMPL parameter estimation.
  * Supports both regression and optimization approaches.
  * 
  * @param {Array} keypoints - Detected 2D keypoints
+ * @param {string} imageData - Optional base64 image for remote mode
  * @returns {Promise<Object>} SMPL parameters {betas, thetas, translation, camera}
  */
-export async function fitSMPL(keypoints) {
+export async function fitSMPL(keypoints, imageData = null) {
   logger.startStage(PipelineStage.SMPL);
   
   try {
     let smplParams;
 
-    if (isRealInference() && pipelineConfig.models.smplRegressor.enabled) {
+    if (pipelineConfig.smplMode === 'remote') {
+      logger.info(PipelineStage.SMPL, 'Using remote SMPL fitting');
+      smplParams = await smplFitRemote(imageData);
+      smplParams.keypoints = keypoints || [];
+      smplParams.method = 'remote';
+
+    } else if (isRealInference() && pipelineConfig.models.smplRegressor.enabled) {
       // REAL INFERENCE PATH
       logger.info(PipelineStage.SMPL, 'Using real SMPL regression model');
       
@@ -234,6 +326,9 @@ export async function fitSMPL(keypoints) {
       
       smplParams = generateMockSMPLParams(keypoints);
     }
+
+    // Normalize/standardize shape for downstream consumers
+    smplParams = normalizeSMPLParams(smplParams, keypoints);
 
     logger.endStage(PipelineStage.SMPL, {
       betasShape: smplParams.betas.length,
